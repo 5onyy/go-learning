@@ -1,2 +1,0 @@
-var m map[string]int   // m is nil
-m["key"] = 1           // PANIC: assignment to entry in nil map
