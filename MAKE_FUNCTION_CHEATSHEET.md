@@ -107,10 +107,12 @@ Use `make` when you need to specify a **length or capacity**. Use literals when 
 
 ## Summary Table
 
-| Type    | Syntax                        | Returns         | Zero value (without make)  |
-|---------|-------------------------------|-----------------|----------------------------|
-| Slice   | `make([]T, len, cap)`         | `[]T`           | `nil` (unusable for indexing) |
-| Map     | `make(map[K]V, cap)`          | `map[K]V`       | `nil` (panics on write)    |
-| Channel | `make(chan T, cap)`            | `chan T`         | `nil` (blocks forever)     |
+
+| Type    | Syntax                | Returns   | Zero value (without make)     |
+| ------- | --------------------- | --------- | ----------------------------- |
+| Slice   | `make([]T, len, cap)` | `[]T`     | `nil` (unusable for indexing) |
+| Map     | `make(map[K]V, cap)`  | `map[K]V` | `nil` (panics on write)       |
+| Channel | `make(chan T, cap)`   | `chan T`  | `nil` (blocks forever)        |
+
 
 The key takeaway: **use `make` whenever you need a slice, map, or channel that is ready to use**, especially when you want to control the initial size or buffer capacity.
