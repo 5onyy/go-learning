@@ -10,7 +10,7 @@ func main() {
 }
 
 func bigSlowOperation() {
-	defer trace("BigSlowOperation")()
+	defer trace("BigSlowOperation")() //don’t forget the final parentheses in the defer statement,or the ‘‘on entry’’ action will happen on exit and the on-exit action won’t happen at all
 	time.Sleep(10 * time.Second)
 }
 
