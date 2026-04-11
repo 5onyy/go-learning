@@ -27,9 +27,9 @@ type ColoredPoint struct {
 
 var cache = struct { // This defines a struct without giving it a name.
 	sync.Mutex
-	mapping map[string]string 
-} { // mmediate initialization
-	mapping: make(map[string]string)
+	mapping map[string]string
+}{ // mmediate initialization
+	mapping: make(map[string]string),
 }
 
 // Use when we didn't need to use this struct again
@@ -59,4 +59,12 @@ func main() {
 	q.ScaleBy(2)
 	fmt.Printf("p.Point: %v\n", p.Point)
 	fmt.Printf("q.Point: %v\n", q.Point)
+
+	ppoint := Point{1, 2}
+	qpoint := Point{4, 6}
+
+	distancefromP := ppoint.Distance // method value <- a function that binds a method Point.Distance to receiver distancefromP
+
+	fmt.Printf("distancefromP(qpoint): %v\n", distancefromP(qpoint)) // can be invoke without receiver value
+
 }
