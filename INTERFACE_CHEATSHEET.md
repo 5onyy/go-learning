@@ -1,4 +1,4 @@
-# Go Interfaces Cheatsheet (§7.1 – §7.3)
+# Go Interfaces Cheatsheet (§7.1 – §7.6)
 
 ## 7.1 Interfaces as Contracts
 
@@ -252,6 +252,328 @@ Go:      // just define Write([]byte)(int, error) and you're an io.Writer
 
 ---
 
+## 7.4 Parsing Flags with `flag.Value`
+
+The `flag.Value` interface lets you define **custom command-line flag types**:
+
+```go
+package flag
+
+type Value interface {
+    String() string    // format for -help output
+    Set(string) error  // parse user input and update the value
+}
+```
+
+- `String()` formats the current value (used in help messages) — so every `flag.Value` is also a `fmt.Stringer`
+- `Set()` is the **inverse of `String()`** — it parses a string and updates the flag value
+
+### Example: Temperature Flag
+
+A `celsiusFlag` that accepts both Celsius and Fahrenheit input:
+
+```go
+type celsiusFlag struct{ Celsius }
+
+func (f *celsiusFlag) Set(s string) error {
+    var unit string
+    var value float64
+    fmt.Sscanf(s, "%f%s", &value, &unit)
+    switch unit {
+    case "C", "°C":
+        f.Celsius = Celsius(value)
+        return nil
+    case "F", "°F":
+        f.Celsius = FToC(Fahrenheit(value))
+        return nil
+    }
+    return fmt.Errorf("invalid temperature %q", s)
+}
+```
+
+**Key trick:** `celsiusFlag` **embeds** `Celsius`, which already has a `String()` method. So it only needs to define `Set()` to satisfy `flag.Value`.
+
+### Registering with `flag.Var`
+
+```go
+func CelsiusFlag(name string, value Celsius, usage string) *Celsius {
+    f := celsiusFlag{value}
+    flag.CommandLine.Var(&f, name, usage)
+    return &f.Celsius
+}
+```
+
+Usage:
+
+```bash
+$ ./tempflag                  # 20°C  (default)
+$ ./tempflag -temp -18C       # -18°C
+$ ./tempflag -temp 212°F      # 100°C (converted)
+$ ./tempflag -temp 273.15K    # error: invalid temperature
+```
+
+### Why the Help Message Shows °C for Default 20.0
+
+The `-help` output calls `String()` on the flag value. Since `celsiusFlag` embeds `Celsius`, its `String()` method formats `20.0` as `"20°C"` — the `°C` comes from the `String` method, not from the raw `20.0` value.
+
+---
+
+## 7.5 Interface Values
+
+An interface value has **two components** internally:
+
+| Component | What it holds |
+|---|---|
+| **Dynamic type** | Type descriptor (e.g., `*os.File`) |
+| **Dynamic value** | Actual value of that type (e.g., pointer to stdout) |
+
+### Interface Value Lifecycle
+
+```go
+var w io.Writer       // type: nil,          value: nil    → nil interface
+w = os.Stdout         // type: *os.File,     value: →stdout → non-nil
+w = new(bytes.Buffer) // type: *bytes.Buffer, value: →buf   → non-nil
+w = nil               // type: nil,          value: nil    → nil again
+```
+
+### Nil Interface vs Non-Nil
+
+- **Nil interface:** both type and value are nil → `w == nil` is `true`
+- Calling any method on a nil interface → **panic**
+
+```go
+var w io.Writer
+w.Write([]byte("hello")) // panic: nil pointer dereference
+```
+
+### Dynamic Dispatch
+
+When you call a method through an interface, the compiler uses **dynamic dispatch**:
+
+1. Look up the method address from the type descriptor
+2. Make an indirect call to that address
+3. Pass a copy of the dynamic value as the receiver
+
+```go
+w = os.Stdout
+w.Write([]byte("hello"))  // calls (*os.File).Write
+
+w = new(bytes.Buffer)
+w.Write([]byte("hello"))  // calls (*bytes.Buffer).Write
+```
+
+The same `w.Write()` call dispatches to completely different methods depending on the dynamic type.
+
+### Comparing Interface Values
+
+Interface values can be compared with `==` and `!=`:
+
+```go
+// Equal if:
+// 1. Both are nil, OR
+// 2. Same dynamic type AND equal dynamic values
+
+var w1, w2 io.Writer
+fmt.Println(w1 == w2) // true (both nil)
+```
+
+**Danger:** comparing interfaces whose dynamic type is **not comparable** (slice, map, function) causes a **panic**:
+
+```go
+var x interface{} = []int{1, 2, 3}
+fmt.Println(x == x) // panic: comparing uncomparable type []int
+```
+
+### Inspecting Dynamic Type with `%T`
+
+```go
+var w io.Writer
+fmt.Printf("%T\n", w) // "<nil>"
+
+w = os.Stdout
+fmt.Printf("%T\n", w) // "*os.File"
+
+w = new(bytes.Buffer)
+fmt.Printf("%T\n", w) // "*bytes.Buffer"
+```
+
+### 7.5.1 Caveat: An Interface Containing a Nil Pointer Is Non-Nil
+
+This is the **most common trap** for Go beginners:
+
+```go
+const debug = false
+
+func main() {
+    var buf *bytes.Buffer           // nil pointer
+    if debug {
+        buf = new(bytes.Buffer)     // only allocated when debug=true
+    }
+    f(buf) // BUG: passes a non-nil interface containing a nil pointer
+}
+
+func f(out io.Writer) {
+    if out != nil {                 // true! (interface has type *bytes.Buffer)
+        out.Write([]byte("done!\n")) // panic: nil pointer dereference
+    }
+}
+```
+
+**What happened:**
+
+| | type | value | `== nil`? |
+|---|---|---|---|
+| **Nil interface** | nil | nil | `true` |
+| **Interface with nil pointer** | `*bytes.Buffer` | nil | `false` |
+
+The interface has a **dynamic type** (`*bytes.Buffer`), so `out != nil` is `true` even though the pointer inside is nil.
+
+**The fix:** declare `buf` as the interface type so it stays truly nil when unassigned:
+
+```go
+var buf io.Writer               // nil interface (not *bytes.Buffer)
+if debug {
+    buf = new(bytes.Buffer)
+}
+f(buf)                           // OK: buf is a true nil interface
+```
+
+---
+
+## 7.6 Sorting with `sort.Interface`
+
+`sort.Sort` works with **any type** that implements these three methods:
+
+```go
+package sort
+
+type Interface interface {
+    Len() int
+    Less(i, j int) bool  // i, j are indices
+    Swap(i, j int)
+}
+```
+
+The sort algorithm only needs: how many elements, how to compare two, and how to swap two.
+
+### Sorting Strings
+
+```go
+type StringSlice []string
+
+func (p StringSlice) Len() int           { return len(p) }
+func (p StringSlice) Less(i, j int) bool { return p[i] < p[j] }
+func (p StringSlice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+
+sort.Sort(StringSlice(names))
+// or simply:
+sort.Strings(names)
+```
+
+### Sorting Custom Structs
+
+Define a new type per sort order. Only `Less` changes — `Len` and `Swap` are always the same for slices:
+
+```go
+type byArtist []*Track
+func (x byArtist) Len() int           { return len(x) }
+func (x byArtist) Less(i, j int) bool { return x[i].Artist < x[j].Artist }
+func (x byArtist) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }
+
+sort.Sort(byArtist(tracks))
+
+type byYear []*Track
+func (x byYear) Len() int           { return len(x) }
+func (x byYear) Less(i, j int) bool { return x[i].Year < x[j].Year }
+func (x byYear) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }
+
+sort.Sort(byYear(tracks))
+```
+
+### Reverse Sorting with `sort.Reverse`
+
+No need for a separate type — just wrap:
+
+```go
+sort.Sort(sort.Reverse(byArtist(tracks)))
+```
+
+**How `sort.Reverse` works** — it uses **composition** (embedding):
+
+```go
+package sort
+
+type reverse struct{ Interface }  // embeds sort.Interface
+
+func (r reverse) Less(i, j int) bool { return r.Interface.Less(j, i) }  // flipped!
+
+func Reverse(data Interface) Interface { return reverse{data} }
+```
+
+- `Len` and `Swap` come from the embedded `Interface` for free
+- Only `Less` is overridden with flipped indices `(j, i)` instead of `(i, j)`
+
+### `customSort` — Avoid Defining a New Type Per Sort Order
+
+Combine the slice with a comparison function:
+
+```go
+type customSort struct {
+    t    []*Track
+    less func(x, y *Track) bool
+}
+
+func (x customSort) Len() int           { return len(x.t) }
+func (x customSort) Less(i, j int) bool { return x.less(x.t[i], x.t[j]) }
+func (x customSort) Swap(i, j int)      { x.t[i], x.t[j] = x.t[j], x.t[i] }
+```
+
+Multi-tier sort (Title → Year → Length):
+
+```go
+sort.Sort(customSort{tracks, func(x, y *Track) bool {
+    if x.Title != y.Title {
+        return x.Title < y.Title
+    }
+    if x.Year != y.Year {
+        return x.Year < y.Year
+    }
+    if x.Length != y.Length {
+        return x.Length < y.Length
+    }
+    return false
+}})
+```
+
+### Convenience Functions
+
+The `sort` package provides shortcuts for common types:
+
+| Slice type | Sort | Check sorted |
+|---|---|---|
+| `[]int` | `sort.Ints(a)` | `sort.IntsAreSorted(a)` |
+| `[]string` | `sort.Strings(a)` | `sort.StringsAreSorted(a)` |
+| `[]float64` | `sort.Float64s(a)` | `sort.Float64sAreSorted(a)` |
+
+Reverse any of them:
+
+```go
+sort.Sort(sort.Reverse(sort.IntSlice(values)))
+```
+
+### `sort.IsSorted` — Check Without Sorting
+
+Tests whether a sequence is already sorted (at most n-1 comparisons):
+
+```go
+values := []int{3, 1, 4, 1}
+fmt.Println(sort.IntsAreSorted(values)) // false
+sort.Ints(values)
+fmt.Println(sort.IntsAreSorted(values)) // true
+```
+
+---
+
 ## Summary Table
 
 | Concept | Key Point |
@@ -264,3 +586,10 @@ Go:      // just define Write([]byte)(int, error) and you're an io.Writer
 | Pointer receiver | Only `*T` satisfies interfaces requiring `*T` methods, not `T` itself |
 | Empty interface | `interface{}` is satisfied by all types — holds any value |
 | Compile-time check | `var _ SomeInterface = (*MyType)(nil)` verifies satisfaction |
+| `flag.Value` | Implement `String()` + `Set(string) error` for custom flag types |
+| Interface value | Two components: dynamic type + dynamic value |
+| Nil trap | Interface with nil pointer is **non-nil** — use interface type for optional params |
+| Dynamic dispatch | Method calls through interfaces are resolved at runtime via type descriptor |
+| `sort.Interface` | `Len()`, `Less(i,j)`, `Swap(i,j)` — sort anything |
+| `sort.Reverse` | Wraps a `sort.Interface` with flipped `Less` indices via embedding |
+| `customSort` | Struct with slice + comparison func — avoids one type per sort order |
